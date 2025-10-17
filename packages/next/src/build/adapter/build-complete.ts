@@ -524,9 +524,9 @@ export async function handleBuildComplete({
         isMiddleware: boolean = false
       ) {
         let type: AdapterOutputType = AdapterOutputType.PAGES
-        const isAppPrefix = page.page.startsWith('app/')
-        const isAppPage = isAppPrefix && page.page.endsWith('/page')
-        const isAppRoute = isAppPrefix && page.page.endsWith('/route')
+        const isAppPrefix = page.name.startsWith('app/')
+        const isAppPage = isAppPrefix && page.name.endsWith('/page')
+        const isAppRoute = isAppPrefix && page.name.endsWith('/route')
         let currentOutputs: Array<
           | AdapterOutput['PAGES']
           | AdapterOutput['PAGES_API']
@@ -548,6 +548,7 @@ export async function handleBuildComplete({
         }
 
         const route = page.page.replace(/^(app|pages)\//, '')
+
         const output: Omit<AdapterOutput[typeof type], 'type'> & {
           type: any
         } = {
