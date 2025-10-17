@@ -1241,20 +1241,16 @@ export async function handleBuildComplete({
             outputs.prerenders.push(currentOutput)
 
             if (dataRoute) {
+              const dataPathname = path.posix.join(
+                `/_next/data`,
+                buildId,
+                locale,
+                dynamicRoute + '.json'
+              )
               outputs.prerenders.push({
                 ...initialOutput,
-                id: path.posix.join(
-                  `_next/data`,
-                  buildId,
-                  locale,
-                  dynamicRoute + '.json'
-                ),
-                pathname: path.posix.join(
-                  `_next/data`,
-                  buildId,
-                  locale,
-                  dynamicRoute + '.json'
-                ),
+                id: dataPathname,
+                pathname: dataPathname,
                 // data route doesn't have skeleton fallback
                 fallback: undefined,
                 groupId: prerenderGroupId,
@@ -1396,6 +1392,7 @@ export async function handleBuildComplete({
             `^${config.basePath && config.basePath !== '/' ? path.posix.join('/', config.basePath || '') : ''}[/]?`
           ),
           destination: path.posix.join(
+            '/',
             config.basePath,
             segmentRoute.destination +
               getDestinationQuery(segmentRoute.routeKeys)
@@ -1448,15 +1445,25 @@ export async function handleBuildComplete({
 
         dynamicDataRoutes.push({
           source: page,
-          sourceRegex: routeRegex.namedRegex.replace(
-            '^',
-            `^${path.posix.join(
-              '/',
-              config.basePath,
-              `_next/data`,
-              escapeStringRegexp(buildId)
-            )}[/]?${shouldLocalize ? '(?<nextLocale>[^/]{1,})?' : ''}`
-          ),
+          sourceRegex:
+            shouldLocalize && page === '/'
+              ? '^' +
+                path.posix.join(
+                  '/',
+                  config.basePath,
+                  '_next/data',
+                  escapeStringRegexp(buildId),
+                  '(?<nextLocale>[^/]{1,}).json'
+                )
+              : routeRegex.namedRegex.replace(
+                  '^',
+                  `^${path.posix.join(
+                    '/',
+                    config.basePath,
+                    `_next/data`,
+                    escapeStringRegexp(buildId)
+                  )}[/]?${shouldLocalize ? '(?<nextLocale>[^/]{1,})?' : ''}`
+                ),
           destination,
           has: isFallbackFalse ? fallbackFalseHasCondition : undefined,
           missing: undefined,
