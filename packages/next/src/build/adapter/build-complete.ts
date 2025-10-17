@@ -547,14 +547,15 @@ export async function handleBuildComplete({
           type = AdapterOutputType.PAGES_API
         }
 
+        const route = page.page.replace(/^(app|pages)\//, '')
         const output: Omit<AdapterOutput[typeof type], 'type'> & {
           type: any
         } = {
           type,
           id: page.name,
           runtime: 'edge',
-          sourcePage: page.page.replace(/^(app|pages)\//, ''),
-          pathname: isAppPrefix ? normalizeAppPath(page.name) : page.name,
+          sourcePage: route,
+          pathname: isAppPrefix ? normalizeAppPath(route) : route,
           filePath: path.join(
             distDir,
             page.files.find(
@@ -618,7 +619,7 @@ export async function handleBuildComplete({
               }
             })
           output.pathname = '/_middleware'
-          output.id = '/_middleware'
+          output.id = page.name
           outputs.middleware = output
         } else {
           currentOutputs.push(output)
@@ -1348,8 +1349,10 @@ export async function handleBuildComplete({
         ) + getDestinationQuery(route.routeKeys)
 
       if (
-        config.experimental.cacheComponents ||
-        config.experimental.clientSegmentCache
+        appPageKeys &&
+        appPageKeys.length > 0 &&
+        (config.experimental.cacheComponents ||
+          config.experimental.clientSegmentCache)
       ) {
         // If we have fallback root params (implying we've already
         // emitted a rewrite for the /_tree request), or if the route
