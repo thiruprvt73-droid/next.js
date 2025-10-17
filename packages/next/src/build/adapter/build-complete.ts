@@ -41,6 +41,7 @@ import { addPathPrefix } from '../../shared/lib/router/utils/add-path-prefix'
 import { getRedirectStatus, modifyRouteRegex } from '../../lib/redirect-status'
 import { getNamedRouteRegex } from '../../shared/lib/router/utils/route-regex'
 import { escapeStringRegexp } from '../../shared/lib/escape-regexp'
+import { sortSortableRoutes } from '../../shared/lib/router/utils/sortable-routes'
 
 interface SharedRouteFields {
   /**
@@ -678,6 +679,8 @@ export async function handleBuildComplete({
               filePath: pageFile.replace(/\.js$/, '.html'),
             } satisfies AdapterOutput['STATIC_FILE'])
           }
+
+          // if was a static file output don't create page output as well
           continue
         }
 
@@ -689,6 +692,9 @@ export async function handleBuildComplete({
           return {} as Record<string, string>
         })
         const functionConfig = functionsConfigManifest.functions[route] || {}
+        let sourcePage = route.replace(/^\//, '')
+
+        sourcePage = sourcePage === 'api' ? 'api/index' : sourcePage
 
         const output: AdapterOutput['PAGES'] | AdapterOutput['PAGES_API'] = {
           id: route,
@@ -697,7 +703,7 @@ export async function handleBuildComplete({
             : AdapterOutputType.PAGES,
           filePath: pageTraceFile.replace(/\.nft\.json$/, ''),
           pathname: route,
-          sourcePage: route.replace(/^\//, ''),
+          sourcePage,
           assets,
           runtime: 'nodejs',
           config: {
@@ -829,6 +835,11 @@ export async function handleBuildComplete({
           appOutputMap[normalizedPage] = output
 
           if (output.type === AdapterOutputType.APP_PAGE) {
+            outputs.appPages.push({
+              ...output,
+              pathname: output.pathname + '.rsc',
+              id: output.id + '.rsc',
+            })
             outputs.appPages.push(output)
           } else {
             outputs.appRoutes.push(output)
@@ -1326,20 +1337,53 @@ export async function handleBuildComplete({
       const isFallbackFalse =
         prerenderManifest.dynamicRoutes[route.page]?.fallback === false
 
+      const { hasFallbackRootParams } = route
+
+      const sourceRegex = routeRegex.namedRegex.replace(
+        '^',
+        `^${config.basePath && config.basePath !== '/' ? path.posix.join('/', config.basePath || '') : ''}[/]?${shouldLocalize ? '(?<nextLocale>[^/]{1,})?' : ''}`
+      )
+      const destination =
+        path.posix.join(
+          '/',
+          config.basePath,
+          shouldLocalize ? '/$nextLocale' : '',
+          route.page
+        ) + getDestinationQuery(route.routeKeys)
+
+      if (
+        config.experimental.cacheComponents ||
+        config.experimental.clientSegmentCache
+      ) {
+        // If we have fallback root params (implying we've already
+        // emitted a rewrite for the /_tree request), or if the route
+        // has PPR enabled and client param parsing is enabled, then
+        // we don't need to include any other suffixes.
+        const shouldSkipSuffixes = hasFallbackRootParams
+
+        dynamicRoutes.push({
+          source: route.page + '.rsc',
+          sourceRegex: sourceRegex.replace(
+            new RegExp(escapeStringRegexp('(?:/)?$')),
+            // Now than the upstream issues has been resolved, we can safely
+            // add the suffix back, this resolves a bug related to segment
+            // rewrites not capturing the correct suffix values when
+            // enabled.
+            shouldSkipSuffixes
+              ? '(?<rscSuffix>\\.rsc|\\.segments/.+\\.segment\\.rsc)(?:/)?$'
+              : '(?<rscSuffix>\\.rsc|\\.prefetch\\.rsc|\\.segments/.+\\.segment\\.rsc)(?:/)?$'
+          ),
+          destination: destination?.replace(/($|\?)/, '$rscSuffix$1'),
+          has: isFallbackFalse ? fallbackFalseHasCondition : undefined,
+          missing: undefined,
+        })
+      }
+
       // needs basePath and locale handling if pages router
       dynamicRoutes.push({
         source: route.page,
-        sourceRegex: routeRegex.namedRegex.replace(
-          '^',
-          `^${config.basePath && config.basePath !== '/' ? path.posix.join('/', config.basePath || '') : ''}[/]?${shouldLocalize ? '(?<nextLocale>[^/]{1,})?' : ''}`
-        ),
-        destination:
-          path.posix.join(
-            '/',
-            config.basePath,
-            shouldLocalize ? '/$nextLocale' : '',
-            route.page
-          ) + getDestinationQuery(route.routeKeys),
+        sourceRegex,
+        destination,
         has: isFallbackFalse ? fallbackFalseHasCondition : undefined,
         missing: undefined,
       })
@@ -1365,33 +1409,45 @@ export async function handleBuildComplete({
     const needsMiddlewareResolveRoutes =
       outputs.middleware && outputs.pages.length > 0
 
-    for (const route of routesManifest.dataRoutes) {
-      if (needsMiddlewareResolveRoutes || isDynamicRoute(route.page)) {
-        const shouldLocalize = pageKeys.includes(route.page) && config.i18n
-        const isFallbackFalse =
-          prerenderManifest.dynamicRoutes[route.page]?.fallback === false
+    const dataRoutePages = new Set([
+      ...routesManifest.dataRoutes.map((item) => item.page),
+    ])
+    const sortedDataPages = sortSortableRoutes([
+      ...(needsMiddlewareResolveRoutes
+        ? [...staticPages].map((page) => ({ sourcePage: page, page }))
+        : []),
+      ...routesManifest.dataRoutes.map((item) => ({
+        sourcePage: item.page,
+        page: item.page,
+      })),
+    ])
 
-        const routeRegex = getNamedRouteRegex(route.page + '.json', {
+    for (const { page } of sortedDataPages) {
+      if (needsMiddlewareResolveRoutes || isDynamicRoute(page)) {
+        const shouldLocalize = pageKeys.includes(page) && config.i18n
+        const isFallbackFalse =
+          prerenderManifest.dynamicRoutes[page]?.fallback === false
+
+        const routeRegex = getNamedRouteRegex(page + '.json', {
           prefixRouteKeys: true,
           includeSuffix: true,
         })
         const destination = path.posix.join(
           '/',
           config.basePath,
-          `_next/data`,
-          buildId,
-          ...(route.page === '/'
+          ...(dataRoutePages.has(page) ? [`_next/data`, buildId] : ''),
+          ...(page === '/'
             ? [shouldLocalize ? '$nextLocale.json' : 'index.json']
             : [
                 shouldLocalize ? '$nextLocale' : '',
-                route.page +
+                page +
                   '.json' +
-                  getDestinationQuery(route.routeKeys || {}),
+                  getDestinationQuery(routeRegex.routeKeys || {}),
               ])
         )
 
         dynamicDataRoutes.push({
-          source: route.page,
+          source: page,
           sourceRegex: routeRegex.namedRegex.replace(
             '^',
             `^${path.posix.join(
